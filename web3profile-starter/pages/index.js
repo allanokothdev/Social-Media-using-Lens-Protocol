@@ -1,15 +1,41 @@
 import styles from "../styles/Home.module.css";
 import { Tabs, Button } from "antd";
-
+import { urqlClient, Profile } from "./api/lensCall";
+import Moralis from 'moralis';
+import { useConnect, useAccount, useDisconnect, useContractWrite, usePrepareContractWrite } from "wagmi";
+import { MetaMaskConnector } from "wagmi/connectors/metaMask";
+import abi from "../abi.json";
 
 const { TabPane } = Tabs;
 
-export default function Home() {
-  
-  let nftArray;
-  let myNFT;
+export default function Home({ profile, nftArray, myNFT }) {
+  const { connectAsync } = useConnect();
+  const { disconnectAsync } = useDisconnect();
+  const { isConnected } = useAccount();
+
+  const {config} = usePrepareContractWrite(
+    {
+      addressOrName: '0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d',
+      contractInterface: abi,
+      functionName: 'follow',
+      args: [[profile.id], [0x0]]
+    }
+  )
+
+  const { write } = useContractWrite(config);
+
+  console.log(profile);
 
   async function follow(){
+    if(isConnected){
+      await disconnectAsync();
+    }
+
+    await connectAsync({
+      connector: new MetaMaskConnector({}),
+    });
+
+    write();
 
   }
 
@@ -17,27 +43,27 @@ export default function Home() {
     <div className={styles.container}>
       <img
         className={styles.banner}
-        src={"https://ipfs.moralis.io:2053/ipfs/QmNgA9MNWFfRaoKzBt21VghQopnKXBgVxzyGvv5qjsV4Vw/media/2"}
+        src={profile.coverPicture.original.url}
         alt="cover"
       />
       <div className={styles.profile}>
         <div className={styles.profileLeft}>
           <img
             className={styles.profileImg}
-            src={"https://ipfs.moralis.io:2053/ipfs/QmNgA9MNWFfRaoKzBt21VghQopnKXBgVxzyGvv5qjsV4Vw/media/1"}
+            src={profile.picture.original.url}
             alt="profileImg"
           />
           <div className={styles.info}>
-            <div className={styles.name}>Web3 Mage</div>
-            <div className={styles.handle}>moralismage.lens</div>
-            <div className={styles.bio}>Buidling web3 solutions with magical moralis mage abilities 🧙‍♂️</div>
+            <div className={styles.name}>{profile.name}</div>
+            <div className={styles.handle}>{profile.handle}</div>
+            <div className={styles.bio}>{profile.bio}</div>
             <div className={styles.follow}>
               <div>Followers</div>
-              <div>472</div>
+              <div>{profile.stats.totalFollowers}</div>
             </div>
             <div className={styles.follow}>
               <div>Following</div>
-              <div>34</div>
+              <div>{profile.stats.totalFollowing}</div>
             </div>
           </div>
         </div>
@@ -77,5 +103,48 @@ export default function Home() {
       </div>
     </div>
   );
+}
+
+export async function getServerSideProps() {
+
+  //Fetch Profile
+  const response = await urqlClient.query(Profile).toPromise();
+
+  //iNITIALIZE Moralis
+  await Moralis.start({ apiKey: process.env.MORAL_API_KEY });
+
+  //Fetch NFTS via Moralis API
+  const balances = await Moralis.EvmApi.account.getNFTs({
+    address: response?.data.profile.ownedBy,  //Wallet Address
+    chain: 0x89, //polygon Mainnet ID
+  });
+
+  let nftArray = [];
+  let nfts  = balances?.data.result;
+
+  for(let i = 0; i < nfts.length; i++) {
+    if(nfts[i].metadata !== null){
+      if(
+        "animation_url" in JSON.parse(nfts[i].metadata) && 
+        JSON.parse(nfts[i].metadata).animation_url !== null &&
+        JSON.parse(nfts[i].metadata).animation_url.includes(".lens")
+      ){
+        nftArray.push(JSON.parse(nfts[i].metadata).animation_url);
+      }
+    }
+  }
+
+  const followNFT = await Moralis.EvmApi.token.getTokenIdMetadata({
+    address: response?.data.profile.followNftAddress,
+    chain: 0x89,
+    tokenId: 1,
+  });
+
+  const myNFT = JSON.parse(followNFT.data.metadata).animation_url;
+
+  return {
+    props: { profile: response?.data.profile, nftArray: nftArray, myNFT: myNFT }
+  }
+
 }
 
